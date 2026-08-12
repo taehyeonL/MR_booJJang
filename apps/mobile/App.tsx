@@ -1,0 +1,42 @@
+import { useCallback, useEffect, useState } from "react";
+import { ActivityIndicator, Alert, Button, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import * as Contacts from "expo-contacts";
+import type { Reservation, ReservationMode } from "@bujangnim/shared";
+import { cancelReservation, createReservation, listReservations } from "./src/lib/api";
+import { isSupabaseConfigured, supabase } from "./src/lib/supabase";
+
+const SERVICE_NUMBER = process.env.EXPO_PUBLIC_SERVICE_PHONE_NUMBER;
+const formatDate = (iso: string) => new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Seoul" }).format(new Date(iso));
+function normalizePhone(value: string) { const compact = value.replace(/[\s-]/g, ""); return /^010\d{8}$/.test(compact) ? `+82${compact.slice(1)}` : compact; }
+function uuid() { return typeof crypto?.randomUUID === "function" ? crypto.randomUUID() : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => ((c === "x" ? Math.random() * 16 : Math.random() * 4 + 8) | 0).toString(16)); }
+
+function Onboarding() {
+  const [phone, setPhone] = useState(""); const [code, setCode] = useState(""); const [sent, setSent] = useState(false); const [busy, setBusy] = useState(false);
+  const send = async () => { if (!supabase) return; setBusy(true); const { error } = await supabase.auth.signInWithOtp({ phone: normalizePhone(phone), options: { shouldCreateUser: true } }); setBusy(false); if (error) Alert.alert("인증번호를 보낼 수 없습니다", error.message); else setSent(true); };
+  const verify = async () => { if (!supabase) return; setBusy(true); const { error } = await supabase.auth.verifyOtp({ phone: normalizePhone(phone), token: code, type: "sms" }); setBusy(false); if (error) Alert.alert("인증에 실패했습니다", error.message); };
+  return <View style={styles.panel}><Text style={styles.title}>원하는 때에 부장님 전화가 옵니다</Text><Text style={styles.description}>본인 휴대전화 번호를 인증해 예약을 시작하세요.</Text><TextInput style={styles.input} value={phone} onChangeText={setPhone} placeholder="01012345678" keyboardType="phone-pad" editable={!busy} />{!sent ? <Button title="인증번호 받기" onPress={() => void send()} disabled={busy || phone.length < 10} /> : <><TextInput style={styles.input} value={code} onChangeText={setCode} placeholder="인증번호" keyboardType="number-pad" editable={!busy} /><Button title="인증 완료" onPress={() => void verify()} disabled={busy || code.length < 4} /></>}</View>;
+}
+
+function Card({ reservation, onCancel }: { reservation: Reservation; onCancel: (id: string) => void }) {
+  return <View style={styles.card}><View><Text style={styles.cardTitle}>{formatDate(reservation.scheduled_at)}</Text><Text style={styles.muted}>{reservation.mode === "ai" ? "AI PRO" : "일반 호출"} · {reservation.duration_seconds}초</Text></View><View style={styles.cardRight}><Text style={styles.status}>{reservation.status}</Text>{reservation.status === "scheduled" && <Button title="취소" onPress={() => onCancel(reservation.id)} />}</View></View>;
+}
+
+function Home() {
+  const [reservations, setReservations] = useState<Reservation[]>([]); const [mode, setMode] = useState<ReservationMode>("normal"); const [customTime, setCustomTime] = useState(""); const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => { try { setReservations(await listReservations()); } catch (e) { Alert.alert("목록을 불러올 수 없습니다", e instanceof Error ? e.message : "다시 시도하세요."); } }, []);
+  useEffect(() => { void load(); }, [load]);
+  const reserve = async (minutes?: number) => { const at = minutes ? new Date(Date.now() + minutes * 60_000) : new Date(`${customTime.replace(" ", "T")}:00+09:00`); if (Number.isNaN(at.getTime())) return Alert.alert("시간 형식 확인", "예: 2026-08-20 09:00 형식으로 입력하세요."); setBusy(true); try { await createReservation({ scheduled_at: at.toISOString(), duration_seconds: 60, mode, idempotency_key: uuid() }); setCustomTime(""); await load(); Alert.alert("예약 완료", `${formatDate(at.toISOString())}에 전화드립니다.`); } catch (e) { Alert.alert("예약할 수 없습니다", e instanceof Error ? e.message : "다시 시도하세요."); } finally { setBusy(false); } };
+  const cancel = async (id: string) => { try { await cancelReservation(id); await load(); } catch (e) { Alert.alert("취소할 수 없습니다", e instanceof Error ? e.message : "다시 시도하세요."); } };
+  const saveContact = async () => { if (!SERVICE_NUMBER) return Alert.alert("서비스 번호 미설정", "EXPO_PUBLIC_SERVICE_PHONE_NUMBER을 설정한 뒤 다시 시도하세요."); const permission = await Contacts.requestPermissionsAsync(); if (permission.status !== "granted") return Alert.alert("연락처 권한 필요", "설정에서 연락처 권한을 허용한 후 다시 시도하세요."); await Contacts.addContactAsync({ firstName: "부장님", phoneNumbers: [{ label: "mobile", number: SERVICE_NUMBER }] }); Alert.alert("저장 완료", "서비스 번호를 ‘부장님’으로 저장했습니다."); };
+  return <ScrollView contentContainerStyle={styles.content}><View style={styles.header}><Text style={styles.heading}>부장님!</Text><Button title="로그아웃" onPress={() => void supabase?.auth.signOut()} /></View><View style={styles.panel}><Text style={styles.title}>발신번호를 저장하세요</Text><Text style={styles.description}>전화가 오면 ‘부장님’으로 표시됩니다.</Text><Button title="연락처에 저장" onPress={() => void saveContact()} /></View><View style={styles.panel}><Text style={styles.title}>빠른 예약</Text><View style={styles.row}>{[1, 3, 5].map((m) => <TouchableOpacity key={m} style={styles.quickButton} disabled={busy} onPress={() => void reserve(m)}><Text>{m}분 후</Text></TouchableOpacity>)}</View><View style={styles.row}><TouchableOpacity style={[styles.modeButton, mode === "normal" && styles.selected]} onPress={() => setMode("normal")}><Text>일반 호출</Text></TouchableOpacity><TouchableOpacity style={[styles.modeButton, mode === "ai" && styles.selected]} onPress={() => setMode("ai")}><Text>AI PRO</Text></TouchableOpacity></View><TextInput style={styles.input} value={customTime} onChangeText={setCustomTime} placeholder="직접 예약: 2026-08-20 09:00" /><Button title="직접 예약" onPress={() => void reserve()} disabled={busy || !customTime} /></View><View style={styles.header}><Text style={styles.title}>내 예약</Text><Button title="새로고침" onPress={() => void load()} /></View>{reservations.length === 0 ? <Text style={styles.empty}>아직 예약이 없습니다.</Text> : reservations.map((r) => <Card key={r.id} reservation={r} onCancel={(id) => void cancel(id)} />)}</ScrollView>;
+}
+
+export default function App() {
+  const [loading, setLoading] = useState(true); const [signedIn, setSignedIn] = useState(false);
+  useEffect(() => { if (!supabase) { setLoading(false); return; } void supabase.auth.getSession().then(({ data }) => { setSignedIn(Boolean(data.session)); setLoading(false); }); const { data } = supabase.auth.onAuthStateChange((_event, session) => setSignedIn(Boolean(session))); return () => data.subscription.unsubscribe(); }, []);
+  if (!isSupabaseConfigured) return <SafeAreaView style={styles.safe}><View style={styles.panel}><Text style={styles.title}>연결 설정이 필요합니다</Text><Text style={styles.description}>.env에 공개 Supabase URL과 publishable key를 입력하세요.</Text></View></SafeAreaView>;
+  if (loading) return <SafeAreaView style={styles.safe}><ActivityIndicator size="large" /></SafeAreaView>;
+  return <SafeAreaView style={styles.safe}>{signedIn ? <Home /> : <Onboarding />}</SafeAreaView>;
+}
+
+const styles = StyleSheet.create({ safe: { flex: 1, backgroundColor: "#f5f5f0" }, content: { padding: 20, gap: 14 }, header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, panel: { margin: 20, padding: 20, gap: 12, backgroundColor: "white", borderRadius: 16 }, heading: { fontSize: 30, fontWeight: "800" }, title: { fontSize: 19, fontWeight: "700" }, description: { color: "#505050", lineHeight: 20 }, input: { borderWidth: 1, borderColor: "#c9c9c9", borderRadius: 10, padding: 12, fontSize: 16 }, row: { flexDirection: "row", gap: 8 }, quickButton: { flex: 1, alignItems: "center", backgroundColor: "#e9efe6", padding: 14, borderRadius: 10 }, modeButton: { flex: 1, alignItems: "center", borderWidth: 1, borderColor: "#c9c9c9", padding: 10, borderRadius: 10 }, selected: { backgroundColor: "#d7e8cf", borderColor: "#4d7146" }, card: { backgroundColor: "white", padding: 16, borderRadius: 14, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, cardTitle: { fontSize: 16, fontWeight: "700" }, cardRight: { alignItems: "flex-end", gap: 5 }, status: { color: "#326333", fontWeight: "700" }, muted: { color: "#6b6b6b" }, empty: { color: "#6b6b6b", textAlign: "center" } });

@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "부장님!",
+    "slug": "bujangnim",
+    "version": "0.1.0",
+    "scheme": "bujangnim",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "plugins": [["expo-contacts", { "contactsPermission": "부장님 발신번호를 연락처에 저장하려면 권한이 필요합니다." }]],
+    "ios": { "bundleIdentifier": "com.example.bujangnim" },
+    "android": { "package": "com.example.bujangnim" }
+  }
+}
+

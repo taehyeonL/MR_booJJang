@@ -1,0 +1,10 @@
+project_id = "bujangnim"
+
+[functions.provider-webhook]
+verify_jwt = false
+
+[functions.dispatch-due-reservations]
+verify_jwt = false
+
+[functions.call-instructions]
+verify_jwt = false

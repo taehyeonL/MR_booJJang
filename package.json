@@ -1,0 +1,13 @@
+{
+  "name": "bujangnim",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspace @bujangnim/shared",
+    "mobile": "npm run start --workspace @bujangnim/mobile"
+  },
+  "engines": { "node": ">=22.13.0" }
+}
+
